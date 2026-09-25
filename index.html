@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Network Client</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Network Course Client</h1>
+    <p class="subtitle">Simple frontend that talks to an HTTP server over the network.</p>
+
+    <section class="card">
+      <label for="serverUrl">Server URL</label>
+      <input id="serverUrl" type="text" placeholder="http://VM_IP:PORT" />
+      <button id="saveUrlBtn">Save</button>
+    </section>
+
+    <section class="card">
+      <h2>Send a request</h2>
+      <label for="endpoint">Endpoint</label>
+      <input id="endpoint" type="text" value="/api/status" />
+
+      <label for="method">Method</label>
+      <select id="method">
+        <option value="GET">GET</option>
+        <option value="POST">POST</option>
+      </select>
+
+      <label for="body">Body (JSON, only used for POST)</label>
+      <textarea id="body" rows="4" placeholder='{"message": "hello"}'></textarea>
+
+      <button id="sendBtn">Send</button>
+    </section>
+
+    <section class="card">
+      <h2>Response</h2>
+      <pre id="output">No request sent yet.</pre>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
