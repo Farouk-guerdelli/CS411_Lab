@@ -1,103 +1,91 @@
-# Network Course Frontend Template
+# Sports Field Booking (CS411 Computer Networks)
 
-A minimal static frontend (HTML/CSS/JS, no build step) for a networking course.
-It lets you point at any HTTP server (running on a VM, for example) and send
-GET/POST requests to it, then view the raw response.
+A web app where sports field owners list their fields and players book time
+slots. The server is written in Python with the standard library only
+(`http.server`, `sqlite3`); the client is plain HTML, CSS and JavaScript.
+Traffic is plain HTTP on purpose, so every request and response can be read
+in Wireshark.
 
-## Files
+## Architecture
 
-- `index.html` — page structure
-- `style.css` — styling
-- `script.js` — fetch logic, talks to whatever server URL you enter
-- `.gitignore`
+```
+                     Internal network (private, no internet needed)
+   ┌─────────────────────────┐          ┌─────────────────────────────────┐
+   │ Ubuntu Desktop client 1 │──HTTP───▶│ Ubuntu Server VM                │
+   │ browser                 │          │ 192.168.100.10:8000             │
+   └─────────────────────────┘          │ server.py                       │
+   ┌─────────────────────────┐          │  ├─ /           web client      │
+   │ Ubuntu Desktop client 2 │──HTTP───▶│  ├─ /api/...    JSON API        │
+   │ browser                 │          │  └─ app.db      SQLite database │
+   └─────────────────────────┘          └─────────────────────────────────┘
+```
 
-## 1. Run it locally
+- **Server VM** (Ubuntu Server, `192.168.100.10`): runs `server.py`, which
+  serves both the web page and the JSON API on port 8000 and stores
+  everything in `app.db`.
+- **Two client VMs** (Ubuntu Desktop) on the same internal network: open the
+  page in a browser. Two clients let us show two users at once, for example
+  two players trying to book the same slot.
 
-No build tools needed. Either:
+## How to run
 
-- Open `index.html` directly in a browser, or
-- Serve it so it behaves like a real site (recommended, avoids some browser
-  restrictions on `file://`):
-
-  ```bash
-  python3 -m http.server 5500
-  ```
-
-  Then visit `http://localhost:5500`.
-
-## 2. Push to GitHub
+On the server VM:
 
 ```bash
-cd net-frontend-template
-git init
-git add .
-git commit -m "Initial frontend template"
-git branch -M main
-git remote add origin https://github.com/<your-username>/<your-repo>.git
-git push -u origin main
+git clone <repo-url> && cd CS411_Lab
+python3 server.py              # listens on 0.0.0.0:8000, Ctrl+C to stop
+sudo ufw allow 8000/tcp        # only if the ufw firewall is enabled
 ```
 
-## 3. Connect it to your VM's HTTP server
+`app.db` is created automatically on the first start. No packages to install.
 
-You have two things running:
+On each client VM, open **http://192.168.100.10:8000/** in the browser.
+Check connectivity first with `ping 192.168.100.10` or
+`curl http://192.168.100.10:8000/health`.
 
-1. **Your backend/HTTP server**, on the VM (e.g. a Python `http.server`,
-   Flask/Express app, or whatever your course requires).
-2. **This frontend**, either opened locally in a browser or also served from
-   the VM.
+To capture the traffic, run Wireshark on a client (or `tcpdump` on the server)
+with the filter `tcp.port == 8000`, then use *Follow → HTTP Stream*.
 
-### Option A — Frontend runs locally, server runs on the VM
+## HTTP scenarios
 
-1. Make sure the server on the VM is listening on all interfaces, not just
-   `localhost`. E.g. for Python:
-   ```bash
-   python3 -m http.server 8000 --bind 0.0.0.0
-   ```
-2. Find the VM's IP address:
-   ```bash
-   ip addr show    # or: hostname -I
-   ```
-3. Make sure the VM's firewall/security group allows inbound traffic on that
-   port (e.g. `sudo ufw allow 8000`, or open the port in your cloud
-   provider's security group / NAT rules if it's a cloud VM).
-4. In the page, set **Server URL** to `http://<VM_IP>:<PORT>` and click Save.
-5. Pick an endpoint (e.g. `/api/status`) and method, then click Send.
+| Scenario | Request | Status |
+|----------|---------|--------|
+| Server is up | `GET /health` | 200 OK |
+| Load the web page | `GET /` | 200 OK |
+| Register a user | `POST /api/register` | 201 Created |
+| Register with a missing field or invalid role | `POST /api/register` | 400 Bad Request |
+| Register a username that already exists | `POST /api/register` | 409 Conflict |
+| Log in | `POST /api/login` | 200 OK |
+| Log in with a wrong password | `POST /api/login` | 401 Unauthorized |
+| Use the API without a token / with a deleted token | e.g. `GET /api/me` | 401 Unauthorized |
+| Owner adds a field | `POST /api/fields` | 201 Created |
+| Invalid field (empty name, negative price...) | `POST /api/fields` | 400 Bad Request |
+| Player tries to add a field | `POST /api/fields` | 403 Forbidden |
+| Owner edits another owner's field | `PUT /api/fields/<id>` | 403 Forbidden |
+| Field that does not exist | `GET /api/fields/99999` | 404 Not Found |
+| Player books a free slot | `POST /api/bookings` | 201 Created |
+| Booking in the past or end before start | `POST /api/bookings` | 400 Bad Request |
+| Owner tries to book | `POST /api/bookings` | 403 Forbidden |
+| Slot overlaps an existing booking | `POST /api/bookings` | 409 Conflict |
+| Two players book the same slot at the same moment | `POST /api/bookings` ×2 | one 201, one 409 |
+| Player cancels another player's booking | `DELETE /api/bookings/<id>` | 403 Forbidden |
+| Owner deletes a field that has bookings | `DELETE /api/fields/<id>` | 409 Conflict |
+| Wrong method on a route | e.g. `PUT /api/login` | 405 Method Not Allowed (+ `Allow` header) |
+| Unknown path or file | e.g. `GET /nope` | 404 Not Found |
+| Path traversal attempt | e.g. `GET /../server.py` | 404 Not Found |
+| Unexpected server error | any | 500 Internal Server Error (JSON) |
 
-If your server is a plain static file server (no `/api/...` routes), just use
-`/` as the endpoint to fetch the index page and confirm connectivity.
+Every error is a JSON object like `{"error": "..."}`. The web client shows it in
+a red box, and the panel at the bottom of the page shows the method, URL and
+status code of the last requests.
 
-### Option B — Frontend also served from the VM
+## Documentation
 
-1. Clone the repo on the VM:
-   ```bash
-   git clone https://github.com/<your-username>/<your-repo>.git
-   cd <your-repo>
-   ```
-2. Serve the frontend on one port and your backend on another, e.g.:
-   ```bash
-   python3 -m http.server 5500 --bind 0.0.0.0   # frontend
-   ```
-3. From your own machine, browse to `http://<VM_IP>:5500`.
-4. Set **Server URL** in the page to wherever the backend is listening
-   (could be the same VM on a different port, e.g. `http://<VM_IP>:8000`).
-
-### CORS
-
-If the frontend's origin (e.g. `http://localhost:5500`) differs from the
-server's origin (e.g. `http://<VM_IP>:8000`), the browser enforces CORS.
-Your server needs to send a header like:
-
-```
-Access-Control-Allow-Origin: *
-```
-
-(or your frontend's specific origin). Most simple demo servers for a
-networking course will need this added explicitly — Python's built-in
-`http.server` does not send it by default.
-
-## Notes
-
-- The server URL you enter is saved in the browser's `localStorage` so you
-  don't have to retype it every time.
-- This is intentionally framework-free so it's easy to read, modify, and
-  explain for a networking assignment.
+- [BACKEND.md](BACKEND.md): server code organization, every endpoint, password
+  hashing, tokens, 401 vs 403 vs 404, the overlap rule and why the booking
+  transaction prevents double booking.
+- [CLIENT.md](CLIENT.md): how the web client is organized and how it talks to
+  the API.
+- [tests/race_proof.py](tests/race_proof.py): shows that two simultaneous
+  bookings of the same slot cannot both succeed. Run it with
+  `python3 tests/race_proof.py` (it uses a temporary database).
