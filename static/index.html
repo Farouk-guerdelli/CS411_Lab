@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Field Booking</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!--
+    Single page app: all screens are <section> elements in this file.
+    script.js shows or hides them depending on who is logged in:
+      logged out -> auth + fields
+      player     -> fields + player section
+      owner      -> fields + owner section
+    Forms have no "required" attributes on purpose: the server does all the
+    validation, so during the demo we can see its 400 errors.
+  -->
+  <header class="topbar">
+    <h1>Field Booking</h1>
+    <div id="userBar" class="user-bar hidden">
+      <span>Logged in as <strong id="userName"></strong> (<span id="userRole"></span>)</span>
+      <button id="logoutBtn" class="secondary">Logout</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Messages from the client: red for errors, green for success -->
+    <div id="message" class="message hidden" role="alert"></div>
+
+    <!-- ===================== Logged out: login and register ===================== -->
+    <section id="authSection" class="card-row">
+      <form id="loginForm" class="card">
+        <h2>Login</h2>
+        <label for="loginUsername">Username</label>
+        <input id="loginUsername" autocomplete="username" />
+        <label for="loginPassword">Password</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" />
+        <button type="submit">Login</button>
+      </form>
+
+      <form id="registerForm" class="card">
+        <h2>Register</h2>
+        <label for="registerUsername">Username</label>
+        <input id="registerUsername" autocomplete="username" />
+        <label for="registerPassword">Password</label>
+        <input id="registerPassword" type="password" autocomplete="new-password" />
+        <label for="registerRole">I am a</label>
+        <select id="registerRole">
+          <option value="player">Player (I book fields)</option>
+          <option value="owner">Owner (I list my fields)</option>
+        </select>
+        <button type="submit">Register</button>
+      </form>
+    </section>
+
+    <!-- ===================== Everyone: browse fields ===================== -->
+    <section class="card">
+      <h2>Fields</h2>
+      <form id="filterForm" class="inline-form">
+        <input id="sportFilter" placeholder="Filter by sport, e.g. football" />
+        <button type="submit">Filter</button>
+        <button type="button" id="clearFilterBtn" class="secondary">Clear</button>
+      </form>
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Sport</th><th>Location</th><th>Price / hour</th><th>Owner</th><th></th></tr>
+        </thead>
+        <tbody id="fieldsTable"></tbody>
+      </table>
+    </section>
+
+    <!-- ===================== Player only ===================== -->
+    <section id="playerSection" class="hidden">
+      <div class="card">
+        <h2>Book a slot</h2>
+        <div class="grid">
+          <div>
+            <label for="bookField">Field</label>
+            <select id="bookField"></select>
+          </div>
+          <div>
+            <label for="bookDate">Date</label>
+            <input id="bookDate" type="date" />
+          </div>
+        </div>
+        <button id="showSlotsBtn" class="secondary">Show booked slots</button>
+
+        <h3>Already booked on this day</h3>
+        <ul id="bookedSlots" class="slots"><li class="muted">Choose a field and a date.</li></ul>
+
+        <div class="grid">
+          <div>
+            <label for="bookStart">From</label>
+            <select id="bookStart"></select>
+          </div>
+          <div>
+            <label for="bookEnd">To</label>
+            <select id="bookEnd"></select>
+          </div>
+        </div>
+        <button id="bookBtn">Book</button>
+      </div>
+
+      <div class="card">
+        <h2>My bookings</h2>
+        <table>
+          <thead>
+            <tr><th>Date</th><th>Time</th><th>Field</th><th>Location</th><th>Total</th><th></th></tr>
+          </thead>
+          <tbody id="myBookingsTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===================== Owner only ===================== -->
+    <section id="ownerSection" class="hidden">
+      <div class="card">
+        <h2>My fields</h2>
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Sport</th><th>Location</th><th>Price / hour</th><th></th></tr>
+          </thead>
+          <tbody id="myFieldsTable"></tbody>
+        </table>
+      </div>
+
+      <!-- The same form adds a new field or edits an existing one. -->
+      <form id="fieldForm" class="card">
+        <h2 id="fieldFormTitle">Add a field</h2>
+        <input id="fieldId" type="hidden" />
+        <div class="grid">
+          <div>
+            <label for="fieldName">Name</label>
+            <input id="fieldName" />
+          </div>
+          <div>
+            <label for="fieldSport">Sport</label>
+            <input id="fieldSport" />
+          </div>
+          <div>
+            <label for="fieldLocation">Location</label>
+            <input id="fieldLocation" />
+          </div>
+          <div>
+            <label for="fieldPrice">Price per hour</label>
+            <input id="fieldPrice" type="number" step="any" />
+          </div>
+        </div>
+        <button type="submit" id="fieldSubmitBtn">Add field</button>
+        <button type="button" id="cancelEditBtn" class="secondary hidden">Cancel editing</button>
+      </form>
+
+      <div class="card">
+        <h2>Bookings of my field</h2>
+        <div class="grid">
+          <div>
+            <label for="ownerBookingsField">Field</label>
+            <select id="ownerBookingsField"></select>
+          </div>
+          <div>
+            <label for="ownerBookingsDate">Date</label>
+            <input id="ownerBookingsDate" type="date" />
+          </div>
+        </div>
+        <button id="ownerBookingsBtn" class="secondary">Show bookings</button>
+        <ul id="ownerBookings" class="slots"><li class="muted">Choose a field and a date.</li></ul>
+      </div>
+    </section>
+  </main>
+
+  <!-- Shows the last API calls, so the HTTP status codes are visible in the demo -->
+  <footer id="lastRequest" class="last-request">
+    Last request: <span class="muted">none yet</span>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

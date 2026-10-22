@@ -1,7 +1,9 @@
-# Backend: how it works (Stages 1-3)
+# Backend: how it works (Stages 1-4)
 
-Run it with `python server.py`. It listens on `0.0.0.0:8000` over plain HTTP,
-so all traffic (including passwords and tokens) is readable in Wireshark.
+Run it with `python server.py` and stop it with Ctrl+C. It listens on
+`0.0.0.0:8000` over plain HTTP, so all traffic (including passwords and
+tokens) is readable in Wireshark. The same server also sends the web client:
+see [CLIENT.md](CLIENT.md).
 
 ## How the code is organized
 
@@ -11,6 +13,8 @@ so all traffic (including passwords and tokens) is readable in Wireshark.
 | `auth.py`   | Hashes passwords, creates users, logs in (creates tokens), finds the user for a token, logs out. |
 | `fields.py` | SQL queries for sports fields: list, get one, create, update, delete. |
 | `bookings.py` | SQL queries for bookings, including the double-booking check done inside one transaction. |
+| `static/`   | The web client (HTML, CSS, JS), served by `server.py`. |
+| `tests/race_proof.py` | Shows that the booking transaction prevents double booking. |
 | `db.py`     | Opens the SQLite file `app.db` and creates the 4 tables (`users`, `sessions`, `fields`, `bookings`) on startup. |
 
 A request goes through these steps:
@@ -20,6 +24,9 @@ A request goes through these steps:
 2. `do_GET` / `do_POST` / `do_PUT` / ... all call `dispatch(method)`.
 3. `dispatch` splits off the query string (`?sport=football`) and looks up
    the path in `ROUTES` with `match_route`:
+   - not an API route: if it names a file in `static/` (`/` means
+     `/index.html`), the file is sent with its `Content-Type` (only GET,
+     otherwise 405). Paths that point outside `static/` are refused.
    - path not found -> **404**
    - path found but method not allowed -> **405** with an `Allow` header
    - a path part written `<id>` in `ROUTES` matches any value, e.g.

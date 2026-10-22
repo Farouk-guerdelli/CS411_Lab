@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""HTTP server for the sports field booking app (CS411, stage 3).
+"""HTTP server for the sports field booking app (CS411, stage 4).
 
-Only uses the Python standard library. Every response is JSON and carries
-CORS headers so the browser client can call it from another origin.
+Only uses the Python standard library. It serves two things:
+- the API under /api/... : every response is JSON and carries CORS headers
+- the web client (HTML, CSS, JS files from the static/ folder)
 
 Files:
 - server.py    HTTP handling: reading requests, routing, permission checks,
-               input validation, sending JSON responses
+               input validation, sending JSON responses and static files
 - db.py        SQLite connection and table creation
 - auth.py      password hashing, users and login sessions (tokens)
 - fields.py    database queries for sports fields
@@ -14,10 +15,11 @@ Files:
 """
 import json
 import math
+import os
 import traceback
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import auth
 import bookings
@@ -32,6 +34,23 @@ MAX_TEXT_LENGTH = 100
 
 # Ids are stored as 64-bit SQLite integers; we accept up to 18 digits.
 MAX_ID = 10**18 - 1
+
+# The web client's files. Only files inside this folder can be served.
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+# Content-Type for each file extension we serve. Written out by hand (instead
+# of the mimetypes module) because on Windows mimetypes reads the registry,
+# which sometimes maps .js to text/plain and breaks the page.
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".json": "application/json",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+}
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -385,7 +404,6 @@ def handle_cancel_booking(handler, booking_id):
 # A path part written "<id>" matches any value; it is converted to an integer
 # and passed to the handler function as an extra argument.
 ROUTES = {
-    "/": {"GET": handle_health},
     "/health": {"GET": handle_health},
     "/api/status": {"GET": handle_health},
     "/api/register": {"POST": handle_register},
@@ -424,6 +442,31 @@ def match_route(path):
     return None, None
 
 
+def find_static_file(path):
+    """Return the full path of the file in static/ for a URL path, or None.
+    "/" means "/index.html".
+
+    Path traversal protection: a URL like /../server.py or /..%2Fapp.db
+    could point outside static/. We build the real absolute path (realpath
+    resolves "..", symbolic links and, on Windows, "\\") and only accept it
+    if it is still inside STATIC_DIR."""
+    if path == "/":
+        path = "/index.html"
+    relative = unquote(path).lstrip("/")      # "%2E%2E" -> ".."
+    if "\x00" in relative:                      # a NUL byte makes os functions fail
+        return None
+    static_root = os.path.realpath(STATIC_DIR)
+    full_path = os.path.realpath(os.path.join(static_root, relative))
+    try:
+        inside = os.path.commonpath([static_root, full_path]) == static_root
+    except ValueError:
+        # Different drives on Windows (e.g. /C:/Windows/win.ini or /CON).
+        inside = False
+    if inside and os.path.isfile(full_path):
+        return full_path
+    return None
+
+
 # ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
@@ -441,6 +484,27 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def send_file(self, file_path):
+        """Send a static file with the Content-Type of its extension."""
+        with open(file_path, "rb") as f:
+            body = f.read()
+        extension = os.path.splitext(file_path)[1].lower()
+        self.send_response(200)
+        for key, value in CORS_HEADERS.items():
+            self.send_header(key, value)
+        self.send_header("Content-Type", CONTENT_TYPES.get(extension, "application/octet-stream"))
+        self.send_header("Content-Length", str(len(body)))
+        # Always ask the browser to check for a new version, so changes to
+        # the client show up after a simple reload.
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_method_not_allowed(self, method, allowed_methods):
+        allowed = ", ".join(list(allowed_methods) + ["OPTIONS"])
+        self.send_json(405, {"error": f"Method {method} not allowed. Allowed: {allowed}"},
+                       {"Allow": allowed})
 
     def log_request(self, code="-", size="-"):
         # One line per request: time, client IP, method, path, status.
@@ -460,11 +524,18 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             methods, ids = match_route(path)
             if methods is None:
-                raise ApiError(404, f"No route matched: {path}")
+                # Not an API route: maybe a file of the web client.
+                # Paths under /api/ are never looked up as files.
+                file_path = None if path.startswith("/api/") else find_static_file(path)
+                if file_path is None:
+                    raise ApiError(404, f"No route matched: {path}")
+                if method != "GET":
+                    self.send_method_not_allowed(method, ["GET"])
+                    return
+                self.send_file(file_path)
+                return
             if method not in methods:
-                allowed = ", ".join(list(methods) + ["OPTIONS"])
-                self.send_json(405, {"error": f"Method {method} not allowed. Allowed: {allowed}"},
-                               {"Allow": allowed})
+                self.send_method_not_allowed(method, methods)
                 return
             args = [parse_id(text) for text in ids]
             status, payload = methods[method](self, *args)
@@ -506,5 +577,11 @@ class AppHandler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     init_db()
     server = ThreadingHTTPServer((HOST, PORT), AppHandler)
-    print(f"Server running on http://{HOST}:{PORT}", flush=True)
-    server.serve_forever()
+    print(f"Server running on http://{HOST}:{PORT} (press Ctrl+C to stop)", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        # Ctrl+C: stop with a short message instead of a traceback.
+        print("\nServer stopped.", flush=True)
+    finally:
+        server.server_close()   # release port 8000

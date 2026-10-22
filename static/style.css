@@ -1,0 +1,273 @@
+/* Styles for the field booking client. Plain CSS, no framework. */
+
+:root {
+  --bg: #0f1115;
+  --card: #171a21;
+  --border: #2a2e37;
+  --text: #e6e8eb;
+  --muted: #9aa1ac;
+  --accent: #4f8cff;
+  --ok: #3ecf8e;
+  --warn: #f5a524;
+  --error: #ff5c5c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding-bottom: 120px; /* room for the fixed "Last request" panel */
+}
+
+.hidden {
+  display: none !important;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ---------- Top bar ---------- */
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.topbar h1 {
+  font-size: 1.3rem;
+  margin: 0;
+}
+
+.user-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-bar button {
+  margin-top: 0;
+}
+
+/* ---------- Layout ---------- */
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+  overflow-x: auto; /* wide tables scroll inside the card on small screens */
+}
+
+.card h2 {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+
+.card h3 {
+  font-size: 0.95rem;
+  margin: 20px 0 8px;
+}
+
+/* Login and Register side by side, stacked on small screens */
+.card-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+/* Two inputs per line, one per line on small screens */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0 16px;
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.inline-form input {
+  flex: 1 1 200px;
+}
+
+.inline-form button {
+  margin-top: 0;
+}
+
+/* ---------- Form controls ---------- */
+
+label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+
+input, select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+button {
+  margin-top: 16px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 9px 14px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.1);
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+button.danger {
+  background: transparent;
+  border: 1px solid var(--error);
+  color: var(--error);
+}
+
+/* ---------- Tables and lists ---------- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  color: var(--muted);
+  font-weight: normal;
+}
+
+td.actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+td.actions button {
+  margin: 0 0 0 6px;
+  padding: 5px 10px;
+  font-size: 0.8rem;
+}
+
+.slots {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+}
+
+.slots li {
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+}
+
+.slots li.taken {
+  background: rgba(255, 92, 92, 0.12);
+  border-left: 3px solid var(--error);
+}
+
+/* ---------- Messages ---------- */
+
+.message {
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-weight: 500;
+}
+
+.message.error {
+  background: rgba(255, 92, 92, 0.15);
+  border: 1px solid var(--error);
+  color: #ffb3b3;
+}
+
+.message.success {
+  background: rgba(62, 207, 142, 0.12);
+  border: 1px solid var(--ok);
+  color: #a6f0cd;
+}
+
+/* ---------- "Last request" panel (fixed at the bottom) ---------- */
+
+.last-request {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 10px 16px;
+  background: #0b0d11;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.last-request code {
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+/* The newest request is larger; older ones are smaller and dimmed. */
+.last-request .newest {
+  font-size: 0.95rem;
+}
+
+.last-request .older {
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.status-ok {
+  color: var(--ok);
+}
+
+.status-warn {
+  color: var(--warn);
+}
+
+.status-error {
+  color: var(--error);
+}
