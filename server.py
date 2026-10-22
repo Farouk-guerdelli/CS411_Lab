@@ -3,7 +3,8 @@
 
 Only uses the Python standard library. It serves two things:
 - the API under /api/... : every response is JSON and carries CORS headers
-- the web client (HTML, CSS, JS files from the static/ folder)
+- the web client (HTML, CSS, JS files from the static/ folder and its
+  sub-folders static/css/ and static/js/)
 
 Files:
 - server.py    HTTP handling: reading requests, routing, permission checks,
@@ -444,7 +445,9 @@ def match_route(path):
 
 def find_static_file(path):
     """Return the full path of the file in static/ for a URL path, or None.
-    "/" means "/index.html".
+    "/" means "/index.html". Sub-folders work too: "/css/style.css" is
+    static/css/style.css and "/js/app.js" is static/js/app.js. A folder
+    itself ("/css/") is not a file, so it gives None (404).
 
     Path traversal protection: a URL like /../server.py or /..%2Fapp.db
     could point outside static/. We build the real absolute path (realpath

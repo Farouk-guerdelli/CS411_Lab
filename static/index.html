@@ -4,176 +4,309 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Field Booking</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
   <!--
-    Single page app: all screens are <section> elements in this file.
-    script.js shows or hides them depending on who is logged in:
-      logged out -> auth + fields
-      player     -> fields + player section
-      owner      -> fields + owner section
-    Forms have no "required" attributes on purpose: the server does all the
-    validation, so during the demo we can see its 400 errors.
+    Single page app. Every screen is a <section class="view"> in this file;
+    js/app.js shows one of them depending on the address after "#":
+      #/fields         Browse fields (everyone)
+      #/fields/<id>    Field page with the hourly slot grid (everyone)
+      #/my-bookings    My bookings (players)
+      #/my-fields      My fields dashboard (owners)
+    Forms have "novalidate" and no "required" attributes on purpose: the
+    browser never blocks a request, the server does all the validation, so
+    its real 400/401/403/409 answers appear on screen and in Wireshark.
   -->
-  <header class="topbar">
-    <h1>Field Booking</h1>
-    <div id="userBar" class="user-bar hidden">
-      <span>Logged in as <strong id="userName"></strong> (<span id="userRole"></span>)</span>
-      <button id="logoutBtn" class="secondary">Logout</button>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <!-- ===================== Top navigation bar ===================== -->
+  <header class="navbar">
+    <div class="navbar-inner">
+      <a class="brand" href="#/fields">
+        <!-- Logo: a football pitch seen from above -->
+        <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="1" y="5" width="30" height="22" rx="4" fill="currentColor" />
+          <g fill="none" stroke="#fff" stroke-width="1.6">
+            <rect x="4" y="8" width="24" height="16" rx="1" />
+            <line x1="16" y1="8" x2="16" y2="24" />
+            <circle cx="16" cy="16" r="3.2" />
+          </g>
+        </svg>
+        <span>Field Booking</span>
+      </a>
+
+      <nav class="nav-links" aria-label="Main">
+        <a href="#/fields" data-nav="fields">Browse fields</a>
+        <a href="#/my-bookings" data-nav="my-bookings" data-role="player" hidden>My bookings</a>
+        <a href="#/my-fields" data-nav="my-fields" data-role="owner" hidden>My fields</a>
+      </nav>
+
+      <!-- Shown to guests -->
+      <div id="navGuest" class="nav-account">
+        <button type="button" id="navLoginBtn" class="btn btn-ghost">Log in</button>
+        <button type="button" id="navSignupBtn" class="btn btn-primary">Sign up</button>
+      </div>
+
+      <!-- Shown when logged in -->
+      <div id="navUser" class="nav-account" hidden>
+        <span class="nav-user">
+          <span id="navUsername" class="nav-username"></span>
+          <span id="navRole" class="badge"></span>
+        </span>
+        <button type="button" id="logoutBtn" class="btn btn-ghost">Log out</button>
+      </div>
     </div>
   </header>
 
-  <main class="container">
-    <!-- Messages from the client: red for errors, green for success -->
-    <div id="message" class="message hidden" role="alert"></div>
+  <!-- Shown by js/api.js when a request gets no HTTP answer at all -->
+  <div id="offlineBanner" class="banner" role="alert" hidden>
+    <div class="banner-inner">
+      <span><strong>Cannot reach the server.</strong>
+        Check that server.py is running and that this computer is on the same network.</span>
+      <button type="button" id="retryBtn" class="btn btn-small btn-light">Retry</button>
+    </div>
+  </div>
 
-    <!-- ===================== Logged out: login and register ===================== -->
-    <section id="authSection" class="card-row">
-      <form id="loginForm" class="card">
-        <h2>Login</h2>
-        <label for="loginUsername">Username</label>
-        <input id="loginUsername" autocomplete="username" />
-        <label for="loginPassword">Password</label>
-        <input id="loginPassword" type="password" autocomplete="current-password" />
-        <button type="submit">Login</button>
-      </form>
+  <main id="main" class="container" tabindex="-1">
 
-      <form id="registerForm" class="card">
-        <h2>Register</h2>
-        <label for="registerUsername">Username</label>
-        <input id="registerUsername" autocomplete="username" />
-        <label for="registerPassword">Password</label>
-        <input id="registerPassword" type="password" autocomplete="new-password" />
-        <label for="registerRole">I am a</label>
-        <select id="registerRole">
-          <option value="player">Player (I book fields)</option>
-          <option value="owner">Owner (I list my fields)</option>
-        </select>
-        <button type="submit">Register</button>
-      </form>
+    <!-- ===================== Browse fields ===================== -->
+    <section id="view-fields" class="view" aria-labelledby="fieldsTitle">
+      <div class="page-header">
+        <div>
+          <h1 id="fieldsTitle">Browse fields</h1>
+          <p class="page-subtitle">Find a pitch or a court and book it by the hour.</p>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <label class="search">
+          <span class="visually-hidden">Search fields</span>
+          <input id="searchInput" type="search" placeholder="Search by name, location or owner" autocomplete="off" />
+        </label>
+        <div id="sportChips" class="chips" role="group" aria-label="Filter by sport"></div>
+      </div>
+
+      <div id="fieldsState"></div>
+      <div id="fieldsGrid" class="card-grid"></div>
     </section>
 
-    <!-- ===================== Everyone: browse fields ===================== -->
-    <section class="card">
-      <h2>Fields</h2>
-      <form id="filterForm" class="inline-form">
-        <input id="sportFilter" placeholder="Filter by sport, e.g. football" />
-        <button type="submit">Filter</button>
-        <button type="button" id="clearFilterBtn" class="secondary">Clear</button>
-      </form>
-      <table>
-        <thead>
-          <tr><th>Name</th><th>Sport</th><th>Location</th><th>Price / hour</th><th>Owner</th><th></th></tr>
-        </thead>
-        <tbody id="fieldsTable"></tbody>
-      </table>
+    <!-- ===================== Field page and booking ===================== -->
+    <section id="view-field" class="view" aria-labelledby="fieldName" hidden>
+      <a class="back-link" href="#/fields">&larr; All fields</a>
+      <div id="fieldState"></div>
+
+      <div id="fieldContent" hidden>
+        <article class="card field-hero">
+          <div class="field-hero-main">
+            <span id="fieldSport" class="tag"></span>
+            <h1 id="fieldName"></h1>
+            <dl class="details">
+              <div><dt>Location</dt><dd id="fieldLocation"></dd></div>
+              <div><dt>Owner</dt><dd id="fieldOwner"></dd></div>
+            </dl>
+          </div>
+          <div class="field-hero-price">
+            <span id="fieldPrice" class="price-big"></span>
+            <span class="muted">per hour</span>
+          </div>
+        </article>
+
+        <div class="booking-layout">
+          <section class="card" aria-labelledby="slotsTitle">
+            <div class="card-header">
+              <h2 id="slotsTitle">Choose your time</h2>
+              <label class="date-field">
+                <span>Date</span>
+                <input id="bookDate" type="date" />
+              </label>
+            </div>
+            <p class="muted small">Click a start hour, then an end hour. Each slot is one hour.</p>
+            <ul class="legend" aria-label="Legend">
+              <li><span class="legend-swatch swatch-free"></span>Free</li>
+              <li><span class="legend-swatch swatch-selected"></span>Selected</li>
+              <li><span class="legend-swatch swatch-booked"></span>Booked</li>
+            </ul>
+            <div id="slotsState"></div>
+            <div id="slotGrid" class="slot-grid" role="group" aria-label="Hourly slots"></div>
+          </section>
+
+          <aside class="card summary" aria-labelledby="summaryTitle">
+            <h2 id="summaryTitle">Your booking</h2>
+            <dl class="summary-rows">
+              <div><dt>Date</dt><dd id="summaryDate"></dd></div>
+              <div><dt>Time</dt><dd id="summaryTime"></dd></div>
+              <div><dt>Price</dt><dd id="summaryCalc"></dd></div>
+            </dl>
+            <div class="summary-total">
+              <span>Total</span>
+              <strong id="summaryTotal"></strong>
+            </div>
+            <ul id="bookHints" class="hints"></ul>
+            <p id="bookError" class="form-error" role="alert" hidden></p>
+            <button type="button" id="bookBtn" class="btn btn-primary btn-block">Book</button>
+            <button type="button" id="clearSelectionBtn" class="btn btn-link btn-block">Clear selection</button>
+          </aside>
+        </div>
+      </div>
     </section>
 
-    <!-- ===================== Player only ===================== -->
-    <section id="playerSection" class="hidden">
-      <div class="card">
-        <h2>Book a slot</h2>
-        <div class="grid">
-          <div>
-            <label for="bookField">Field</label>
-            <select id="bookField"></select>
-          </div>
-          <div>
-            <label for="bookDate">Date</label>
-            <input id="bookDate" type="date" />
-          </div>
+    <!-- ===================== My bookings (players) ===================== -->
+    <section id="view-my-bookings" class="view" aria-labelledby="myBookingsTitle" hidden>
+      <div class="page-header">
+        <div>
+          <h1 id="myBookingsTitle">My bookings</h1>
+          <p class="page-subtitle">Your upcoming games and your booking history.</p>
         </div>
-        <button id="showSlotsBtn" class="secondary">Show booked slots</button>
-
-        <h3>Already booked on this day</h3>
-        <ul id="bookedSlots" class="slots"><li class="muted">Choose a field and a date.</li></ul>
-
-        <div class="grid">
-          <div>
-            <label for="bookStart">From</label>
-            <select id="bookStart"></select>
-          </div>
-          <div>
-            <label for="bookEnd">To</label>
-            <select id="bookEnd"></select>
-          </div>
-        </div>
-        <button id="bookBtn">Book</button>
+        <a class="btn btn-ghost" href="#/fields">Book another field</a>
       </div>
-
-      <div class="card">
-        <h2>My bookings</h2>
-        <table>
-          <thead>
-            <tr><th>Date</th><th>Time</th><th>Field</th><th>Location</th><th>Total</th><th></th></tr>
-          </thead>
-          <tbody id="myBookingsTable"></tbody>
-        </table>
+      <div id="myBookingsState"></div>
+      <div id="myBookingsContent" hidden>
+        <h2 class="section-title">Upcoming <span id="upcomingCount" class="count"></span></h2>
+        <div id="upcomingList" class="booking-list"></div>
+        <h2 class="section-title">Past <span id="pastCount" class="count"></span></h2>
+        <div id="pastList" class="booking-list"></div>
       </div>
     </section>
 
-    <!-- ===================== Owner only ===================== -->
-    <section id="ownerSection" class="hidden">
-      <div class="card">
-        <h2>My fields</h2>
-        <table>
-          <thead>
-            <tr><th>Name</th><th>Sport</th><th>Location</th><th>Price / hour</th><th></th></tr>
-          </thead>
-          <tbody id="myFieldsTable"></tbody>
-        </table>
+    <!-- ===================== My fields (owners) ===================== -->
+    <section id="view-my-fields" class="view" aria-labelledby="myFieldsTitle" hidden>
+      <div class="page-header">
+        <div>
+          <h1 id="myFieldsTitle">My fields</h1>
+          <p class="page-subtitle">Manage your fields and see who booked them.</p>
+        </div>
+        <button type="button" id="addFieldBtn" class="btn btn-primary">+ Add field</button>
       </div>
+      <div id="myFieldsState"></div>
+      <div id="myFieldsGrid" class="card-grid"></div>
 
-      <!-- The same form adds a new field or edits an existing one. -->
-      <form id="fieldForm" class="card">
-        <h2 id="fieldFormTitle">Add a field</h2>
-        <input id="fieldId" type="hidden" />
-        <div class="grid">
-          <div>
-            <label for="fieldName">Name</label>
-            <input id="fieldName" />
-          </div>
-          <div>
-            <label for="fieldSport">Sport</label>
-            <input id="fieldSport" />
-          </div>
-          <div>
-            <label for="fieldLocation">Location</label>
-            <input id="fieldLocation" />
-          </div>
-          <div>
-            <label for="fieldPrice">Price per hour</label>
-            <input id="fieldPrice" type="number" step="any" />
+      <section id="timelineCard" class="card timeline-card" aria-labelledby="timelineTitle" hidden>
+        <div class="card-header">
+          <h2 id="timelineTitle">Bookings by day</h2>
+          <div class="timeline-controls">
+            <label class="date-field">
+              <span>Field</span>
+              <select id="timelineField"></select>
+            </label>
+            <label class="date-field">
+              <span>Date</span>
+              <input id="timelineDate" type="date" />
+            </label>
           </div>
         </div>
-        <button type="submit" id="fieldSubmitBtn">Add field</button>
-        <button type="button" id="cancelEditBtn" class="secondary hidden">Cancel editing</button>
-      </form>
-
-      <div class="card">
-        <h2>Bookings of my field</h2>
-        <div class="grid">
-          <div>
-            <label for="ownerBookingsField">Field</label>
-            <select id="ownerBookingsField"></select>
-          </div>
-          <div>
-            <label for="ownerBookingsDate">Date</label>
-            <input id="ownerBookingsDate" type="date" />
-          </div>
-        </div>
-        <button id="ownerBookingsBtn" class="secondary">Show bookings</button>
-        <ul id="ownerBookings" class="slots"><li class="muted">Choose a field and a date.</li></ul>
-      </div>
+        <p id="timelineSummary" class="muted small"></p>
+        <div id="timelineState"></div>
+        <div id="timeline" class="timeline"></div>
+      </section>
     </section>
   </main>
 
-  <!-- Shows the last API calls, so the HTTP status codes are visible in the demo -->
-  <footer id="lastRequest" class="last-request">
-    Last request: <span class="muted">none yet</span>
-  </footer>
+  <!-- ===================== Dialogs (native <dialog>: focus trap and Esc for free) ===================== -->
 
-  <script src="script.js"></script>
+  <!-- Log in / Sign up -->
+  <dialog id="authDialog" class="modal" aria-labelledby="authTitle">
+    <div class="modal-header">
+      <h2 id="authTitle">Welcome</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+    </div>
+    <p id="authNotice" class="notice" hidden></p>
+
+    <div class="tabs" role="tablist" aria-label="Log in or sign up">
+      <button type="button" role="tab" id="loginTab" aria-controls="loginForm" aria-selected="true">Log in</button>
+      <button type="button" role="tab" id="signupTab" aria-controls="signupForm" aria-selected="false" tabindex="-1">Sign up</button>
+    </div>
+
+    <form id="loginForm" role="tabpanel" aria-labelledby="loginTab" novalidate>
+      <label for="loginUsername">Username</label>
+      <input id="loginUsername" autocomplete="username" />
+      <label for="loginPassword">Password</label>
+      <input id="loginPassword" type="password" autocomplete="current-password" />
+      <p class="form-error" role="alert" hidden></p>
+      <button type="submit" class="btn btn-primary btn-block">Log in</button>
+    </form>
+
+    <form id="signupForm" role="tabpanel" aria-labelledby="signupTab" novalidate hidden>
+      <fieldset class="role-picker">
+        <legend>How will you use Field Booking?</legend>
+        <label class="role-card">
+          <input type="radio" name="role" value="player" />
+          <span class="role-title">Player</span>
+          <span class="role-text">I want to book fields</span>
+        </label>
+        <label class="role-card">
+          <input type="radio" name="role" value="owner" />
+          <span class="role-title">Owner</span>
+          <span class="role-text">I want to list my fields</span>
+        </label>
+      </fieldset>
+      <label for="signupUsername">Username</label>
+      <input id="signupUsername" autocomplete="username" />
+      <label for="signupPassword">Password</label>
+      <input id="signupPassword" type="password" autocomplete="new-password" />
+      <p class="form-error" role="alert" hidden></p>
+      <button type="submit" class="btn btn-primary btn-block">Create account</button>
+    </form>
+  </dialog>
+
+  <!-- Add / edit a field (owners) -->
+  <dialog id="fieldDialog" class="modal" aria-labelledby="fieldDialogTitle">
+    <form id="fieldForm" novalidate>
+      <div class="modal-header">
+        <h2 id="fieldDialogTitle">Add a field</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+      </div>
+      <label for="fieldFormName">Name</label>
+      <input id="fieldFormName" placeholder="e.g. Central Stadium" />
+      <label for="fieldFormSport">Sport</label>
+      <input id="fieldFormSport" list="sportList" placeholder="e.g. football" />
+      <datalist id="sportList"></datalist>
+      <label for="fieldFormLocation">Location</label>
+      <input id="fieldFormLocation" placeholder="e.g. Downtown" />
+      <label for="fieldFormPrice">Price per hour</label>
+      <input id="fieldFormPrice" type="number" step="any" placeholder="e.g. 120" />
+      <p class="form-error" role="alert" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" id="fieldFormSubmit" class="btn btn-primary">Add field</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Confirmation for Cancel booking / Delete field -->
+  <dialog id="confirmDialog" class="modal modal-small" aria-labelledby="confirmTitle">
+    <form method="dialog">
+      <h2 id="confirmTitle"></h2>
+      <p id="confirmMessage" class="muted"></p>
+      <div class="modal-actions">
+        <button value="cancel" id="confirmCancel" class="btn btn-ghost" autofocus></button>
+        <button value="confirm" id="confirmOk" class="btn btn-danger"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Toast notifications appear here -->
+  <div id="toasts" class="toasts" popover="manual"></div>
+
+  <!-- ===================== Network activity drawer (filled by js/api.js) ===================== -->
+  <aside id="network" class="network" aria-label="Network activity">
+    <button type="button" id="networkToggle" class="network-bar" aria-expanded="false" aria-controls="networkPanel">
+      <span class="network-title">Network activity</span>
+      <span id="networkCount" class="count">0</span>
+      <span id="networkLatest" class="network-latest">No requests yet</span>
+      <span class="network-chevron" aria-hidden="true"></span>
+    </button>
+    <div id="networkPanel" class="network-panel" hidden>
+      <div class="network-head" aria-hidden="true">
+        <span>Time</span><span>Method</span><span>Path</span><span>Status</span><span>Duration</span>
+      </div>
+      <p id="networkEmpty" class="muted small network-empty">API requests will appear here, newest first.</p>
+      <div id="networkList"></div>
+    </div>
+  </aside>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/app.js"></script>
 </body>
 </html>

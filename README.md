@@ -84,8 +84,9 @@ with the filter `tcp.port == 8000`, then use *Follow → HTTP Stream*.
 | Unexpected server error | any | 500 Internal Server Error (JSON) |
 
 Every error is a JSON object like `{"error": "..."}`. The web client shows it in
-a red box, and the panel at the bottom of the page shows the method, URL and
-status code of the last requests.
+a notification with the status code (e.g. `409 Conflict - ...`), and the
+"Network activity" drawer at the bottom of the page lists the last 10 API
+requests with their status code, duration and bodies (passwords hidden).
 
 ## Documentation
 
