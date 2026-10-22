@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
-"""HTTP server for the sports field booking app (CS411, stage 2).
+"""HTTP server for the sports field booking app (CS411, stage 3).
 
 Only uses the Python standard library. Every response is JSON and carries
 CORS headers so the browser client can call it from another origin.
 
 Files:
-- server.py  HTTP handling: reading requests, routing, permission checks,
-             sending JSON responses
-- db.py      SQLite connection and table creation
-- auth.py    password hashing, users and login sessions (tokens)
-- fields.py  database queries for sports fields
+- server.py    HTTP handling: reading requests, routing, permission checks,
+               input validation, sending JSON responses
+- db.py        SQLite connection and table creation
+- auth.py      password hashing, users and login sessions (tokens)
+- fields.py    database queries for sports fields
+- bookings.py  database queries for bookings (with the double-booking check)
 """
 import json
 import math
 import traceback
-from datetime import datetime
+from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 import auth
+import bookings
 import fields
 from db import init_db
 
@@ -27,6 +29,9 @@ PORT = 8000
 
 # Maximum length of the text values of a field (name, sport, location).
 MAX_TEXT_LENGTH = 100
+
+# Ids are stored as 64-bit SQLite integers; we accept up to 18 digits.
+MAX_ID = 10**18 - 1
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -105,12 +110,22 @@ def require_user(handler):
     return user, token
 
 
-def require_owner(handler):
-    """Return the logged-in user if they are an owner.
-    401 if not logged in, 403 if logged in as a player."""
+def require_role(handler, role):
+    """Return the logged-in user if they have this role ('owner' or 'player').
+    401 if not logged in, 403 if logged in with the other role."""
     user, _ = require_user(handler)
-    if user["role"] != "owner":
-        raise ApiError(403, "Only owners can do this.")
+    if user["role"] != role:
+        raise ApiError(403, f"Only {role}s can do this.")
+    return user
+
+
+def optional_user(handler):
+    """For endpoints that work without login: return the logged-in user, or
+    None if no Authorization header was sent. A token that is sent must be
+    valid (401 otherwise)."""
+    if "Authorization" not in handler.headers:
+        return None
+    user, _ = require_user(handler)
     return user
 
 
@@ -120,7 +135,7 @@ def parse_id(text):
     if not (text.isascii() and text.isdigit()):
         raise ApiError(400, f"Id must be an integer, got '{text}'.")
     # SQLite integers are 64-bit; a bigger number would crash the query.
-    if len(text) > 18:
+    if len(text) > len(str(MAX_ID)):
         raise ApiError(400, "Id is too large.")
     return int(text)
 
@@ -188,6 +203,55 @@ def read_field_body(handler):
     return name, sport, location, price
 
 
+def read_int(data, name, low, high):
+    """Return data[name] if it is a whole number from low to high.
+    Raises ApiError(400) naming the field otherwise."""
+    if name not in data:
+        raise ApiError(400, f"Field '{name}' is required.")
+    value = data[name]
+    # bool is a subclass of int, and 10.0 is a float: both are refused.
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        if high == MAX_ID:
+            raise ApiError(400, f"Field '{name}' must be a positive whole number.")
+        raise ApiError(400, f"Field '{name}' must be a whole number from {low} to {high}.")
+    return value
+
+
+def parse_date(text, label):
+    """Check that text is a real date written exactly as YYYY-MM-DD and
+    return it as a date object. Raises ApiError(400) starting with label,
+    e.g. "Field 'date'"."""
+    error = ApiError(400, f"{label} must be a real date in the format YYYY-MM-DD.")
+    if not isinstance(text, str):
+        raise error
+    try:
+        day = datetime.strptime(text, "%Y-%m-%d").date()   # refuses 2026-02-30
+    except ValueError:
+        raise error
+    # strptime also accepts '2026-1-5'; only the zero-padded form is allowed,
+    # so the same day is always stored as the same text.
+    if day.isoformat() != text:
+        raise error
+    return day
+
+
+def read_booking_body(handler):
+    """Read and validate the body of POST /api/bookings.
+    Returns (field_id, date_text, start_hour, end_hour)."""
+    data = read_json_body(handler)
+    field_id = read_int(data, "field_id", 1, MAX_ID)
+    if "date" not in data:
+        raise ApiError(400, "Field 'date' is required.")
+    day = parse_date(data["date"], "Field 'date'")
+    if day < date.today():   # the server's local date
+        raise ApiError(400, "Field 'date' must not be in the past.")
+    start_hour = read_int(data, "start_hour", 0, 23)
+    end_hour = read_int(data, "end_hour", 1, 24)
+    if end_hour <= start_hour:
+        raise ApiError(400, "Field 'end_hour' must be greater than 'start_hour'.")
+    return field_id, day.isoformat(), start_hour, end_hour
+
+
 # ---------------------------------------------------------------------------
 # Route handlers. Each one returns (status_code, payload_dict).
 # ---------------------------------------------------------------------------
@@ -242,7 +306,7 @@ def handle_get_field(handler, field_id):
 
 
 def handle_create_field(handler):
-    user = require_owner(handler)
+    user = require_role(handler, "owner")
     name, sport, location, price = read_field_body(handler)
     field_id = fields.create_field(user["id"], name, sport, location, price)
     return 201, {"message": "Field created.", "field": fields.get_field(field_id)}
@@ -263,8 +327,58 @@ def handle_delete_field(handler, field_id):
 
 
 def handle_my_fields(handler):
-    user = require_owner(handler)
+    user = require_role(handler, "owner")
     return 200, {"fields": fields.list_fields(owner_id=user["id"])}
+
+
+def handle_create_booking(handler):
+    player = require_role(handler, "player")
+    field_id, day, start_hour, end_hour = read_booking_body(handler)
+    try:
+        booking_id = bookings.create_booking(field_id, player["id"], day, start_hour, end_hour)
+    except bookings.SlotTaken as taken:
+        raise ApiError(409, f"Field {field_id} is already booked on {day} "
+                            f"from {taken.start_hour:02d}:00 to {taken.end_hour:02d}:00.")
+    if booking_id is None:
+        raise ApiError(404, f"Field {field_id} not found.")
+    return 201, {"message": "Booking created.", "booking": bookings.get_booking(booking_id)}
+
+
+def handle_my_bookings(handler):
+    player = require_role(handler, "player")
+    return 200, {"bookings": bookings.list_player_bookings(player["id"])}
+
+
+def handle_field_bookings(handler, field_id):
+    """Booked slots of a field on one date: /api/fields/<id>/bookings?date=...
+    Everyone sees the times; the field's owner also sees who booked."""
+    user = optional_user(handler)
+    field = get_field_or_404(field_id)
+    date_text = handler.query.get("date", [""])[0]
+    if not date_text:
+        raise ApiError(400, "Query parameter 'date' is required, e.g. ?date=2026-11-01.")
+    day = parse_date(date_text, "Query parameter 'date'").isoformat()
+
+    is_owner = user is not None and user["id"] == field["owner_id"]
+    slots = []
+    for booking in bookings.list_field_bookings(field_id, day):
+        slot = {"start_hour": booking["start_hour"], "end_hour": booking["end_hour"]}
+        if is_owner:
+            slot["player_username"] = booking["player_username"]
+        slots.append(slot)
+    return 200, {"field_id": field_id, "date": day, "booked_slots": slots}
+
+
+def handle_cancel_booking(handler, booking_id):
+    # Same order as fields: 401 not logged in -> 404 no such booking -> 403 not yours.
+    user, _ = require_user(handler)
+    booking = bookings.get_booking(booking_id)
+    if booking is None:
+        raise ApiError(404, f"Booking {booking_id} not found.")
+    if booking["player_id"] != user["id"]:
+        raise ApiError(403, "You can only cancel your own bookings.")
+    bookings.delete_booking(booking_id)
+    return 200, {"message": "Booking cancelled."}
 
 
 # path -> {HTTP method -> handler function}
@@ -282,6 +396,10 @@ ROUTES = {
     "/api/fields/<id>": {"GET": handle_get_field, "PUT": handle_update_field,
                          "DELETE": handle_delete_field},
     "/api/my/fields": {"GET": handle_my_fields},
+    "/api/fields/<id>/bookings": {"GET": handle_field_bookings},
+    "/api/bookings": {"POST": handle_create_booking},
+    "/api/bookings/<id>": {"DELETE": handle_cancel_booking},
+    "/api/my/bookings": {"GET": handle_my_bookings},
 }
 
 
