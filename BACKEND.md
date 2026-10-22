@@ -198,7 +198,8 @@ at the same time.
 We tested it: 10 threads booking the same slot at the same instant gave
 exactly one 201 and nine 409s, every time. When we removed the transaction
 and added a small delay between the check and the insert, the same slot was
-booked twice.
+booked twice. Run `python tests/race_proof.py` to see this yourself (it uses
+a temporary database, not `app.db`).
 
 ## Known limitations (for later stages)
 
