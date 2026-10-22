@@ -1,4 +1,4 @@
-# Backend: how it works (Stage 1)
+# Backend: how it works (Stages 1-2)
 
 Run it with `python server.py`. It listens on `0.0.0.0:8000` over plain HTTP,
 so all traffic (including passwords and tokens) is readable in Wireshark.
@@ -7,8 +7,9 @@ so all traffic (including passwords and tokens) is readable in Wireshark.
 
 | File        | What it does |
 |-------------|--------------|
-| `server.py` | Receives HTTP requests, picks the right function for the path and method (`ROUTES` table), sends JSON responses with CORS headers, turns every error into a JSON error. |
+| `server.py` | Receives HTTP requests, picks the right function for the path and method (`ROUTES` table), checks permissions, sends JSON responses with CORS headers, turns every error into a JSON error. |
 | `auth.py`   | Hashes passwords, creates users, logs in (creates tokens), finds the user for a token, logs out. |
+| `fields.py` | SQL queries for sports fields: list, get one, create, update, delete. |
 | `db.py`     | Opens the SQLite file `app.db` and creates the 4 tables (`users`, `sessions`, `fields`, `bookings`) on startup. |
 
 A request goes through these steps:
@@ -16,9 +17,13 @@ A request goes through these steps:
 1. Python's `ThreadingHTTPServer` accepts the TCP connection and parses the
    HTTP request (each request runs in its own thread).
 2. `do_GET` / `do_POST` / `do_PUT` / ... all call `dispatch(method)`.
-3. `dispatch` looks up the path in `ROUTES`:
+3. `dispatch` splits off the query string (`?sport=football`) and looks up
+   the path in `ROUTES` with `match_route`:
    - path not found -> **404**
    - path found but method not allowed -> **405** with an `Allow` header
+   - a path part written `<id>` in `ROUTES` matches any value, e.g.
+     `/api/fields/7` matches `/api/fields/<id>`. The value must be an
+     integer (else **400**) and is passed to the route function.
    - otherwise it calls the route function, which returns `(status, data)`.
 4. Route functions raise `ApiError(status, message)` for expected problems
    (bad input, wrong password...). `dispatch` turns it into a JSON error.
@@ -73,6 +78,49 @@ how each new request proves who sent it.
 
 Wrong username and wrong password give the same message, so an attacker cannot
 find out which usernames exist.
+
+## Fields
+
+Owners list their sports fields; everyone can browse them.
+
+| Method | Path                | Who                    | Body | Success |
+|--------|---------------------|------------------------|------|---------|
+| GET    | `/api/fields`       | anyone (no login)      | -    | 200, all fields. Optional `?sport=football` (not case-sensitive) |
+| GET    | `/api/fields/<id>`  | anyone (no login)      | -    | 200, one field with the owner's username |
+| POST   | `/api/fields`       | logged-in owner        | `{name, sport, location, price_per_hour}` | 201, the new field |
+| PUT    | `/api/fields/<id>`  | the owner of the field | same 4 values, all required | 200, the updated field |
+| DELETE | `/api/fields/<id>`  | the owner of the field | -    | 200. **409** if the field has bookings |
+| GET    | `/api/my/fields`    | logged-in owner        | -    | 200, only the caller's fields |
+
+Every field in a response looks like:
+`{id, owner_id, owner_username, name, sport, location, price_per_hour, created_at}`.
+
+**Input rules (400 otherwise, the message names the bad value):**
+`name`, `sport` and `location` must be text, are trimmed, and must be
+1-100 characters. `price_per_hour` must be a number greater than 0.
+The `<id>` in the path must be an integer.
+
+**Why 409 on delete?** Deleting a field that has bookings would silently
+destroy players' reservations. The server refuses and the owner must deal
+with the bookings first. The check and the delete are one SQL statement, so a
+booking cannot be created between them.
+
+### 401 vs 403 vs 404, in simple words
+
+The server checks these in this order:
+
+1. **401 Unauthorized: "Who are you?"** No token, or a token we do not
+   know. Logging in fixes it.
+2. **404 Not Found: "That field does not exist."** Checked before
+   ownership, so a missing field always gives 404, never 403.
+3. **403 Forbidden: "I know who you are, but you are not allowed."** You
+   are logged in, but you are a player trying to create a field, or an owner
+   trying to edit/delete someone else's field. Logging in again does not fix
+   it.
+
+Example: owner B sends `DELETE /api/fields/1`, which belongs to owner A.
+B's token is valid (not 401), field 1 exists (not 404), but B is not its
+owner -> **403**.
 
 ## Known limitations (for later stages)
 

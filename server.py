@@ -1,24 +1,32 @@
 #!/usr/bin/env python3
-"""HTTP server for the sports field booking app (CS411, stage 1).
+"""HTTP server for the sports field booking app (CS411, stage 2).
 
 Only uses the Python standard library. Every response is JSON and carries
 CORS headers so the browser client can call it from another origin.
 
 Files:
-- server.py  HTTP handling: reading requests, routing, sending JSON responses
+- server.py  HTTP handling: reading requests, routing, permission checks,
+             sending JSON responses
 - db.py      SQLite connection and table creation
 - auth.py    password hashing, users and login sessions (tokens)
+- fields.py  database queries for sports fields
 """
 import json
+import math
 import traceback
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 import auth
+import fields
 from db import init_db
 
 HOST = "0.0.0.0"
 PORT = 8000
+
+# Maximum length of the text values of a field (name, sport, location).
+MAX_TEXT_LENGTH = 100
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -97,6 +105,89 @@ def require_user(handler):
     return user, token
 
 
+def require_owner(handler):
+    """Return the logged-in user if they are an owner.
+    401 if not logged in, 403 if logged in as a player."""
+    user, _ = require_user(handler)
+    if user["role"] != "owner":
+        raise ApiError(403, "Only owners can do this.")
+    return user
+
+
+def parse_id(text):
+    """Turn the <id> part of a path into an integer, or raise ApiError(400)."""
+    # isascii() rejects other digit characters such as '²' that int() refuses.
+    if not (text.isascii() and text.isdigit()):
+        raise ApiError(400, f"Id must be an integer, got '{text}'.")
+    # SQLite integers are 64-bit; a bigger number would crash the query.
+    if len(text) > 18:
+        raise ApiError(400, "Id is too large.")
+    return int(text)
+
+
+def get_field_or_404(field_id):
+    field = fields.get_field(field_id)
+    if field is None:
+        raise ApiError(404, f"Field {field_id} not found.")
+    return field
+
+
+def require_field_owner(handler, field_id):
+    """Return the field if the logged-in user owns it.
+    The checks are in this order on purpose:
+    401 not logged in -> 404 field does not exist -> 403 not your field."""
+    user, _ = require_user(handler)
+    field = get_field_or_404(field_id)
+    if field["owner_id"] != user["id"]:
+        raise ApiError(403, "You can only change your own fields.")
+    return field
+
+
+def read_text_value(data, name):
+    """Return data[name] trimmed. Raises ApiError(400) naming the field if it
+    is missing, not a string, empty or too long."""
+    if name not in data:
+        raise ApiError(400, f"Field '{name}' is required.")
+    value = data[name]
+    if not isinstance(value, str) or not value.strip():
+        raise ApiError(400, f"Field '{name}' must be a non-empty string.")
+    value = value.strip()
+    if len(value) > MAX_TEXT_LENGTH:
+        raise ApiError(400, f"Field '{name}' must be at most {MAX_TEXT_LENGTH} characters.")
+    return value
+
+
+def read_price(data):
+    """Return data['price_per_hour'] as a float. Raises ApiError(400) if it is
+    missing or not a positive number."""
+    if "price_per_hour" not in data:
+        raise ApiError(400, "Field 'price_per_hour' is required.")
+    value = data["price_per_hour"]
+    # bool is a subclass of int in Python, so true/false must be refused explicitly.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ApiError(400, "Field 'price_per_hour' must be a number.")
+    try:
+        price = float(value)
+    except OverflowError:
+        # An integer with hundreds of digits cannot become a float.
+        raise ApiError(400, "Field 'price_per_hour' is too large.")
+    # isfinite() refuses NaN and Infinity, which Python's json module accepts.
+    if not math.isfinite(price) or price <= 0:
+        raise ApiError(400, "Field 'price_per_hour' must be a positive number.")
+    return price
+
+
+def read_field_body(handler):
+    """Read and validate the body of POST/PUT /api/fields.
+    Returns (name, sport, location, price_per_hour)."""
+    data = read_json_body(handler)
+    name = read_text_value(data, "name")
+    sport = read_text_value(data, "sport")
+    location = read_text_value(data, "location")
+    price = read_price(data)
+    return name, sport, location, price
+
+
 # ---------------------------------------------------------------------------
 # Route handlers. Each one returns (status_code, payload_dict).
 # ---------------------------------------------------------------------------
@@ -140,7 +231,45 @@ def handle_logout(handler):
     return 200, {"message": "Logged out."}
 
 
+def handle_list_fields(handler):
+    # Optional filter: /api/fields?sport=football (an empty value means no filter)
+    sport = handler.query.get("sport", [""])[0].strip() or None
+    return 200, {"fields": fields.list_fields(sport=sport)}
+
+
+def handle_get_field(handler, field_id):
+    return 200, {"field": get_field_or_404(field_id)}
+
+
+def handle_create_field(handler):
+    user = require_owner(handler)
+    name, sport, location, price = read_field_body(handler)
+    field_id = fields.create_field(user["id"], name, sport, location, price)
+    return 201, {"message": "Field created.", "field": fields.get_field(field_id)}
+
+
+def handle_update_field(handler, field_id):
+    require_field_owner(handler, field_id)
+    name, sport, location, price = read_field_body(handler)
+    fields.update_field(field_id, name, sport, location, price)
+    return 200, {"message": "Field updated.", "field": fields.get_field(field_id)}
+
+
+def handle_delete_field(handler, field_id):
+    require_field_owner(handler, field_id)
+    if not fields.delete_field(field_id):
+        raise ApiError(409, "This field has bookings and cannot be deleted.")
+    return 200, {"message": "Field deleted."}
+
+
+def handle_my_fields(handler):
+    user = require_owner(handler)
+    return 200, {"fields": fields.list_fields(owner_id=user["id"])}
+
+
 # path -> {HTTP method -> handler function}
+# A path part written "<id>" matches any value; it is converted to an integer
+# and passed to the handler function as an extra argument.
 ROUTES = {
     "/": {"GET": handle_health},
     "/health": {"GET": handle_health},
@@ -149,7 +278,32 @@ ROUTES = {
     "/api/login": {"POST": handle_login},
     "/api/me": {"GET": handle_me},
     "/api/logout": {"POST": handle_logout},
+    "/api/fields": {"GET": handle_list_fields, "POST": handle_create_field},
+    "/api/fields/<id>": {"GET": handle_get_field, "PUT": handle_update_field,
+                         "DELETE": handle_delete_field},
+    "/api/my/fields": {"GET": handle_my_fields},
 }
+
+
+def match_route(path):
+    """Find the route for a path. Returns (methods, ids) where ids are the
+    raw text values of the "<id>" parts, or (None, None) if nothing matches.
+    Example: "/api/fields/7" matches "/api/fields/<id>" with ids ["7"]."""
+    path_parts = path.strip("/").split("/")
+    for pattern, methods in ROUTES.items():
+        pattern_parts = pattern.strip("/").split("/")
+        if len(pattern_parts) != len(path_parts):
+            continue
+        ids = []
+        for pattern_part, path_part in zip(pattern_parts, path_parts):
+            if pattern_part == "<id>":
+                ids.append(path_part)
+            elif pattern_part != path_part:
+                break
+        else:
+            # The loop did not "break": every part matched.
+            return methods, ids
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +334,13 @@ class AppHandler(BaseHTTPRequestHandler):
     def dispatch(self, method):
         """Find the route for this request and run it. Every error becomes a
         JSON response, so the client always gets an answer."""
-        path = self.path.split("?", 1)[0]
+        # Split "/api/fields?sport=football" into the path and the query
+        # string. self.query becomes {"sport": ["football"]}.
+        url = urlsplit(self.path)
+        path = url.path
+        self.query = parse_qs(url.query)
         try:
-            methods = ROUTES.get(path)
+            methods, ids = match_route(path)
             if methods is None:
                 raise ApiError(404, f"No route matched: {path}")
             if method not in methods:
@@ -190,7 +348,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.send_json(405, {"error": f"Method {method} not allowed. Allowed: {allowed}"},
                                {"Allow": allowed})
                 return
-            status, payload = methods[method](self)
+            args = [parse_id(text) for text in ids]
+            status, payload = methods[method](self, *args)
             self.send_json(status, payload)
         except ApiError as e:
             self.send_json(e.status, {"error": e.message})
