@@ -9,30 +9,38 @@ in Wireshark.
 ## Architecture
 
 ```
-                     Internal network (private, no internet needed)
-   ┌─────────────────────────┐          ┌─────────────────────────────────┐
-   │ Ubuntu Desktop client 1 │──HTTP───▶│ Ubuntu Server VM                │
-   │ browser                 │          │ 192.168.100.10:8000             │
-   └─────────────────────────┘          │ server.py                       │
-   ┌─────────────────────────┐          │  ├─ /           web client      │
-   │ Ubuntu Desktop client 2 │──HTTP───▶│  ├─ /api/...    JSON API        │
-   │ browser                 │          │  └─ app.db      SQLite database │
-   └─────────────────────────┘          └─────────────────────────────────┘
+                    VirtualBox internal network (192.168.100.x)
+   ┌───────────────────────────┐          ┌─────────────────────────────────┐
+   │ Client1 (Ubuntu Desktop)  │          │ Server VM (Ubuntu Server)       │
+   │ 192.168.100.102 (DHCP)    │──HTTP───▶│ 192.168.100.10:8000 (fixed)     │
+   │ browser                   │          │ server.py                       │
+   └───────────────────────────┘          │  ├─ /           web client      │
+   ┌───────────────────────────┐          │  ├─ /api/...    JSON API        │
+   │ Client2 (Ubuntu Desktop)  │          │  └─ app.db      SQLite database │
+   │ 192.168.100.103 (DHCP)    │──HTTP───▶│                                 │
+   │ browser                   │          │                                 │
+   └───────────────────────────┘          └─────────────────────────────────┘
 ```
 
 - **Server VM** (Ubuntu Server, `192.168.100.10`): runs `server.py`, which
   serves both the web page and the JSON API on port 8000 and stores
   everything in `app.db`.
-- **Two client VMs** (Ubuntu Desktop) on the same internal network: open the
-  page in a browser. Two clients let us show two users at once, for example
-  two players trying to book the same slot.
+- **Client1 and Client2** (Ubuntu Desktop) on the same internal network: open
+  the page in a browser. Two clients let us show two users at once, for
+  example two players trying to book the same slot.
+
+**Addressing:** the server's address `192.168.100.10` is fixed, so the clients
+always find it at the same URL. The clients get their addresses from the
+VirtualBox DHCP server (range `192.168.100.101`-`192.168.100.200`), so
+`.102` and `.103` are only their current addresses and can change after a
+reboot. Check them with `ip -4 addr` before a Wireshark capture.
 
 ## How to run
 
 On the server VM:
 
 ```bash
-git clone <repo-url> && cd CS411_Lab
+git clone https://github.com/Farouk-guerdelli/CS411_Lab.git && cd CS411_Lab
 python3 server.py              # listens on 0.0.0.0:8000, Ctrl+C to stop
 sudo ufw allow 8000/tcp        # only if the ufw firewall is enabled
 ```
